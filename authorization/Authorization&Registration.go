@@ -17,11 +17,15 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 var Users = GetData()
 var DataBasePath = "DataBase.txt"
-var user User
+var userOauth User
+var userRights User
 
 type UserDataGitHub struct {
 	Id   int    `json:"id"`
@@ -36,9 +40,9 @@ type UserData struct {
 type User struct {
 	GitHub_id   int
 	Telegram_id int
-	MyToken     string // ЗАПОЛНИТЬ ПОЛЕ MyToken
 	Roles       [3]string
 	Data        UserData
+	// MyToken     string // ЗАПОЛНИТЬ ПОЛЕ MyToken
 }
 
 type Authanticate struct {
@@ -55,20 +59,74 @@ func main() {
 	router := http.NewServeMux()
 
 	// Регистрируем маршруты
+	router.HandleFunc("/rights", logging(rightsHendler))
+	router.HandleFunc("/changedata", logging(changeData))
 	router.HandleFunc("/Oauth", logging(aouth1Hendler))
 	router.HandleFunc("/Oauth/redirect", logging(oauthHandler))
 
 	http.ListenAndServe(":8080", router)
 }
 
-//func rightsHendler(w http.ResponseWriter, r *http.Request) {
-// Фиксируем chat_id и генерируем ссылку
-// Последнюю помещаем в wr
-//}
+func changeData(w http.ResponseWriter, r http.Request) {
+
+}
+
+func rightsHendler(w http.ResponseWriter, r *http.Request) {
+	res := false
+
+	// Вытаскиваем из запроса код действия и GitHub_id
+	userRights.GitHub_id, _ = strconv.Atoi(r.URL.Query().Get("GitHub_id"))
+	actionCode := r.URL.Query().Get("action_code")
+
+	// Получаем массив ролей вида ["", "", "Student"]
+	user := Users[userRights.GitHub_id] // Значения GitHub_id там не быть не может
+	Roles := user.Roles
+
+	// Реализуем проверку прав       Метод костыльный, надо переделать
+	if Roles[0] == "Admin" || Roles[1] == "Admin" || Roles[2] == "Admin" {
+		res = true
+	}
+	if (Roles[0] == "Teacher" || Roles[1] == "Teacher" || Roles[2] == "Teacher") && (actionCode != "toadmin" && actionCode != "chageRole" && actionCode != "changeSchedule" && actionCode != "sourceOfAutomaticUpdates" && actionCode != "frequencyUpdate") {
+		res = true
+	}
+	if (Roles[0] == "Student" || Roles[1] == "Student" || Roles[2] == "Student") && (actionCode != "toadmin" && actionCode != "chageRole" && actionCode != "changeSchedule" && actionCode != "sourceOfAutomaticUpdates" && actionCode != "frequencyUpdate" && actionCode != "whereIsTheGroup" && actionCode != "leaveACommentOnTheNumPairForTheGroup") {
+		res = true
+	}
+
+	if !res {
+		w.Write([]byte("Ошибка кода действия!"))
+		return
+	}
+
+	// Определяем время жизни JWT-токена
+	tokenExpiresAt := time.Now().Add(time.Hour * time.Duration(1))
+
+	// Заполняем данными полезную нагрузку
+	payload := jwt.MapClaims{
+		"expires_at":  tokenExpiresAt.Unix(),
+		"name":        user.Data.Name,
+		"group":       user.Data.Group,
+		"id_github":   user.GitHub_id,
+		"id_telegram": user.Telegram_id,
+		"roles":       user.Roles,
+	}
+
+	// Создаём токен с методом шифрования HS256
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, payload)
+
+	// Подписываем токен
+	tokenString, err := token.SignedString([]byte(CLIENT_SECRET)) // Возможно, ключ придётся поменять
+	if err != nil {
+		w.Write([]byte("Ошибка в формировании токена"))
+	}
+
+	// Отсылаем токен
+	w.Write([]byte(tokenString))
+}
 
 func aouth1Hendler(w http.ResponseWriter, r *http.Request) {
 	// Получаем Telegram_id и генерируем ссылку +
-	user.Telegram_id, _ = strconv.Atoi(r.URL.Query().Get("chat_id")) // От бота поступает Get-запрос!
+	userOauth.Telegram_id, _ = strconv.Atoi(r.URL.Query().Get("chat_id")) // От бота поступает Get-запрос!
 	authorizationURL := "https://github.com/login/oauth/authorize?client_id=" + CLIENT_ID
 
 	w.Write([]byte(authorizationURL))
@@ -98,16 +156,18 @@ func oauthHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Write([]byte("Ошибка при запросе данных пользователя!"))
 	}
-	user.GitHub_id = userDataGitHub.Id
-	user.Data.Name = userDataGitHub.Name
+	userOauth.GitHub_id = userDataGitHub.Id
+	userOauth.Data.Name = userDataGitHub.Name
 
 	// Проверяем зарегистрирован ли пользователь
-	Users = NewUser(&Users, &user)
+	Users = NewUser(&Users, &userOauth)
 	SafeData(&Users)
+
+	log.Println("Регистрация и авторизация завершена")
 
 	// Переводим user.GitHub_id в []byte
 	b := make([]byte, 8) // 8, потому что GitHub_id имеет тип int64
-	binary.LittleEndian.PutUint64(b, uint64(user.GitHub_id))
+	binary.LittleEndian.PutUint64(b, uint64(userOauth.GitHub_id))
 
 	w.Write(b)
 }
@@ -149,6 +209,9 @@ func getAccessToken(code string) (string, error) {
 		Scope       string `json:"scope"` // !!!!!!!!Понять что из этого "свой токен"!!!!!!!!!!!!
 	}
 	json.NewDecoder(responce.Body).Decode(&responceJSON)
+
+	//log.Println(responceJSON.Scope)
+	//log.Println(responceJSON.TokenType)
 
 	return responceJSON.AccessToken, nil
 }
@@ -237,8 +300,18 @@ func NewUser(Users *map[int]User, NewUser *User) map[int]User {
 	for GitHub_id, user := range *Users {
 		NewUsers[GitHub_id] = user
 	}
+	NewUser.Roles = [3]string{"Student", "", ""}
+	NewUser.Data.Name = "Фамилия Имя Отчество"
+	NewUser.Data.Group = "ПИ-232"
 	NewUsers[NewUser.GitHub_id] = *NewUser
 	return NewUsers
+}
+
+func ChangeRoles(Users *map[int]User, GitHub_id int, Roles [3]string) {
+	OurUser, ok := (*Users)[GitHub_id]
+	if !ok {
+		OurUser.Roles = Roles
+	}
 }
 
 func SafeData(Users *map[int]User) {
