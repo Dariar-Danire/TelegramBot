@@ -1,10 +1,3 @@
-// Нужно создать переменную с текущим значением: ошибка или не ошибка. Если прав недостаточно ИЛИ вход выполнен неуспешно, будет ОШИБКА
-// Нужно подключить файл с информацией о пользователях
-// Нужно создать middleware, состоящий из 3-х слоёв:
-//		1) Логирование
-//		2) ЕСЛИ (отправлен запрос на вход) -> Вход в систему/регистрация. ИНАЧЕ вниз.
-//		3) Проверка прав пользователя
-
 package main
 
 import (
@@ -59,16 +52,21 @@ func main() {
 	router := http.NewServeMux()
 
 	// Регистрируем маршруты
-	router.HandleFunc("/rights", logging(rightsHendler))
-	router.HandleFunc("/changedata", logging(changeData))
+	router.HandleFunc("/rights", logging(rightsHendler))  // Сюда запрос на проверку прав
+	router.HandleFunc("/changedata", logging(changeData)) // Если нужно изменить данные пользователя (ФИО, Группа) РОЛИ НЕЛЬЗЯ
 	router.HandleFunc("/Oauth", logging(aouth1Hendler))
-	router.HandleFunc("/Oauth/redirect", logging(oauthHandler))
+	router.HandleFunc("/Oauth/redirect", logging(oauthHandler)) // Это для гитхаба!
 
 	http.ListenAndServe(":8080", router)
 }
 
 func changeData(w http.ResponseWriter, r http.Request) {
+	GitHub_id := r.URL.Query().Get("GitHub_id")
 
+	// Ищем пользователя
+	// Меняем данные
+	// Если изменение проведено успешно — *код успешного завершения операции*
+	// Иначе — *код ошибки*
 }
 
 func rightsHendler(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +137,7 @@ func oauthHandler(w http.ResponseWriter, r *http.Request) {
 	var authanticate Authanticate
 	var responceHtml = "<html><body><h1>Вы НЕ аутентифецированы!</h1></body></html>"
 
+	// Принимам code от GitHub
 	code := r.URL.Query().Get("code")
 	if code != "" {
 		//authanticate.is_done = true
@@ -149,12 +148,12 @@ func oauthHandler(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := getAccessToken(code)
 	if err != nil {
-		w.Write([]byte("Ошибка при запросе токена доступа!"))
+		w.Write([]byte("Ошибка при запросе токена доступа!")) // Здесь мы возвращаем его GitHub, а надо Bot
 	}
 
 	userDataGitHub, err := getUserData(accessToken)
 	if err != nil {
-		w.Write([]byte("Ошибка при запросе данных пользователя!"))
+		w.Write([]byte("Ошибка при запросе данных пользователя!")) // Здесь мы возвращаем его GitHub, а надо Bot
 	}
 	userOauth.GitHub_id = userDataGitHub.Id
 	userOauth.Data.Name = userDataGitHub.Name
@@ -169,8 +168,8 @@ func oauthHandler(w http.ResponseWriter, r *http.Request) {
 	b := make([]byte, 8) // 8, потому что GitHub_id имеет тип int64
 	binary.LittleEndian.PutUint64(b, uint64(userOauth.GitHub_id))
 
-	w.Write(b)
-}
+	w.Write(b) // Здесь мы возвращаем его GitHub, а надо Bot
+} //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Надо перенаправить ответ боту!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 func logging(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +292,7 @@ func GetData() map[int]User {
 func NewUser(Users *map[int]User, NewUser *User) map[int]User {
 	_, ok := (*Users)[(*NewUser).GitHub_id]
 	if ok {
-		//fmt.Println("Такой пользователь уже есть")
+		fmt.Println("Такой пользователь уже есть")
 		return *Users
 	}
 	NewUsers := make(map[int]User, len(*Users)+1)
